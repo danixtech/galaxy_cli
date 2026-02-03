@@ -42,8 +42,9 @@ in_transit = []
 
 # Production
 def produce():
-    player["inventory"]["alloys"] += forge["production_per_tick"]
-    print(f"[Production] Forge produced {forge['production_per_tick']} Alloys")
+    produced = forge['production_per_tick']
+    player["inventory"]["alloys"] += produced
+    print(f"[Production] Forge produced {produced} alloys.")
 
 # Ship Resources
 def ship(amount):
@@ -83,7 +84,7 @@ def resolve_shipments():
             print(f"[Risk] Shipment disrupted! Lost {lost} Alloys.")
 
         revenue = amount * haven["price"]
-        player["credits"] =+ revenue
+        player["credits"] += revenue
 
         print(f"[Arrival] {amount} Alloys sold at Haven for {revenue} credits.")
 
