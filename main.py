@@ -22,7 +22,7 @@ RETURN_SHIPPING_MULTIPLIER = 1.0
 # World State
 # =============================
 
-# Starting Date
+# Starting Date (Stardate)
 tick = 0
 
 # Player Inventory
@@ -62,7 +62,7 @@ route = {
     "risk": 0.05
 }
 
-# All shipments live here
+# Active shipments (inbound and outbound)
 in_transit = []
 
 # =============================
@@ -74,9 +74,12 @@ def produce():
     produced = forge["production_per_tick"]
     cost = produced * forge["production_cost"]
 
+    if player["credits"] < cost:
+        print("[Production] Insufficient credits. Production halted.")
+        return
+
     player["inventory"]["alloys"] += produced
     player["credits"] -= cost
-
     print(f"[Production] Produced {produced} alloys for {cost:.2f} credits.")
 
 # Ship Resources
@@ -87,7 +90,7 @@ def ship(amount):
 
     cost = route["base_fee"] + (amount * route["shipping_cost"])
     if player["credits"] < cost:
-        print("Not enough credits to pay shipping costs.")
+        print("Not enough credits to cover shipping costs.")
         return
 
     player["inventory"]["alloys"] -= amount
@@ -129,6 +132,16 @@ def resolve_shipments():
             amount -= lost
             print(f"[Risk] Shipment disrupted! Lost {lost} alloys.")
 
+        # First, warehouse satisfies demand
+        from_warehouse = min(haven["warehouse_inventory"], haven["demand_remaining"])
+        if from_warehouse > 0:
+            haven["warehouse_inventory"] -= from_warehouse
+            haven["demand_remaining"] -= from_warehouse
+            revenue = from_warehouse * haven["current_price"]
+            player["credits"] += revenue
+            print(f"[Warehouse Sale] Sold {from_warehouse} alloys from warehouse for {revenue:.2f} credits.")
+
+        # Then new shipment sells
         sellable = min(amount, haven["demand_remaining"])
         unsold = amount - sellable
 
@@ -136,7 +149,7 @@ def resolve_shipments():
         player["credits"] += revenue
         haven["demand_remaining"] -= sellable
 
-        print(f"[Arrival] Sold {sellable} alloys for {revenue:.2f} credits.")
+        print(f"[Arrival] Sold {sellable} new alloys for {revenue:.2f} credits.")
 
         if unsold <= 0:
             continue
@@ -168,19 +181,31 @@ def resolve_shipments():
 
 # Inventory Upkeep Costs
 def inventory_upkeep():
-    cost = player["inventory"]["alloys"] * INVENTORY_COST_PER_UNIT
-    player["credits"] -= cost
+    inventory = player["inventory"]["alloys"]
+    if inventory <= 0:
+        return
 
-    if cost > 0:
+    cost = inventory * INVENTORY_COST_PER_UNIT
+    if player["credits"] >= cost:
+        player["credits"] -= cost
         print(f"[Storage] Paid {cost:.2f} credits to store inventory.")
+    else:
+        print(f"[Storage] Unable to pay storage. {inventory} alloys destroyed.")
+        player["inventory"]["alloys"] = 0
 
 # Warehouse Upkeep Costs
 def warehouse_upkeep():
-    cost = haven["warehouse_inventory"] * haven["warehouse_storage_cost"]
-    player["credits"] -= cost
+    inventory = haven["warehouse_inventory"]
+    if inventory <= 0:
+        return
 
-    if cost > 0:
+    cost = inventory * haven["warehouse_storage_cost"]
+    if player["credits"] >= cost:
+        player["credits"] -= cost
         print(f"[Warehouse] Paid {cost:.2f} credits in warehouse fees.")
+    else:
+        print(f"[Warehouse] Unable to pay fees. {inventory} alloys destroyed.")
+        haven["warehouse_inventory"] = 0
 
 # Reset Demand
 def reset_demand():
@@ -210,12 +235,12 @@ def status():
     print("\n--- STATUS ---")
     print(f"Stardate: {tick}")
     print(f"Credits: {player['credits']:.2f}")
-    print(f"Inventory: {player['inventory']['alloys']} alloys")
+    print(f"Forge Inventory: {player['inventory']['alloys']} alloys")
+    print(f"Haven Warehouse: {haven['warehouse_inventory']}/{haven['warehouse_capacity']}")
     print(f"In Transit: {len(in_transit)} shipments")
-    print(f"Warehouse: {haven['warehouse_inventory']}/{haven['warehouse_capacity']}")
     print("----------------\n")
 
-# Help Manu
+# Help Menu
 def help_menu():
     print("""
 Commands:
