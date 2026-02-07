@@ -3,25 +3,39 @@
 # galaxy_cli
 #
 
-# Import modules
+# =============================
+# Import Modules
+# =============================
 import random
 
+# =============================
 # Constants
+# =============================
+
+# Production Costs
 INVENTORY_COST_PER_UNIT = 0.5
 
-# Set Defaults
+# Return Costs
+RETURN_SHIPPING_MULTIPLIER = 1.0
+
+# =============================
+# World State
+# =============================
+
+# Starting Date
 tick = 0
+
+# Player Inventory
 player = {
-    "credits": 100,
+    "credits": 100, # Investment Capitol
     "inventory": {
         "alloys": 0
     }
 }
 
-# Souce Planet
+# Source Planet
 forge = {
     "name": "Forge",
-    "price": 6,
     "production_per_tick": 10,
     "production_cost": 1
 }
@@ -32,39 +46,48 @@ haven = {
     "base_price": 10,
     "current_price": 10,
     "demand_per_tick": 15,
-    "demand_remaining": 15
+    "demand_remaining": 15,
+    "warehouse_capacity": 100,
+    "warehouse_inventory": 0,
+    "warehouse_storage_cost": 1.5
 }
 
-# Route data
+# Route Data
 route = {
     "from": "Forge",
     "to": "Haven",
     "travel_time": 3,
     "shipping_cost": 1,
-    "risk": 0.05,
-    "base_fee": 5
+    "base_fee": 5,
+    "risk": 0.05
 }
 
-# Shipments currently moving
+# All shipments live here
 in_transit = []
 
-# Production
+# =============================
+# Core Mechanics
+# =============================
+
+# Resource Production
 def produce():
-    produced = forge['production_per_tick']
-    production_cost = forge['production_per_tick'] * forge['production_cost']
+    produced = forge["production_per_tick"]
+    cost = produced * forge["production_cost"]
+
     player["inventory"]["alloys"] += produced
-    player["credits"] -= production_cost
-    print(f"[Production] Forge produced {produced} alloys for {production_cost:.2f} credits.")
+    player["credits"] -= cost
+
+    print(f"[Production] Produced {produced} alloys for {cost:.2f} credits.")
 
 # Ship Resources
 def ship(amount):
     if player["inventory"]["alloys"] < amount:
-        print("Not enough Alloys to ship.")
+        print("Not enough alloys to ship.")
         return
 
     cost = route["base_fee"] + (amount * route["shipping_cost"])
     if player["credits"] < cost:
-        print("Not enough credits to pay shipping cost.")
+        print("Not enough credits to pay shipping costs.")
         return
 
     player["inventory"]["alloys"] -= amount
@@ -72,13 +95,14 @@ def ship(amount):
 
     shipment = {
         "amount": amount,
-        "arrival_tick": tick + route["travel_time"]
+        "arrival_tick": tick + route["travel_time"],
+        "type": "outbound"
     }
+
     in_transit.append(shipment)
+    print(f"[Shipping] Sent {amount} alloys to Haven (arrives at Stardate {shipment['arrival_tick']}).")
 
-    print(f"[Shipping] Sent {amount} Alloys to Haven for {cost} credits. (arrives at Stardate {shipment['arrival_tick']})")
-
-# Resolve Shipments
+# Shipment Resolution
 def resolve_shipments():
     global in_transit
 
@@ -88,64 +112,117 @@ def resolve_shipments():
     for shipment in arrived:
         amount = shipment["amount"]
 
-        effective_risk = route["risk"] * (amount / 10)
+        # -----------------------------
+        # RETURN SHIPMENTS
+        # -----------------------------
+        if shipment["type"] == "return":
+            player["inventory"]["alloys"] += amount
+            print(f"[Return Arrived] {amount} alloys returned to Forge.")
+            continue
 
+        # -----------------------------
+        # OUTBOUND SHIPMENTS
+        # -----------------------------
+        effective_risk = route["risk"] * (amount / 10)
         if random.random() < effective_risk:
             lost = amount // 2
             amount -= lost
-            print(f"[Risk] Shipment disrupted! Lost {lost} Alloys.")
+            print(f"[Risk] Shipment disrupted! Lost {lost} alloys.")
 
         sellable = min(amount, haven["demand_remaining"])
         unsold = amount - sellable
 
         revenue = sellable * haven["current_price"]
+        player["credits"] += revenue
         haven["demand_remaining"] -= sellable
 
+        print(f"[Arrival] Sold {sellable} alloys for {revenue:.2f} credits.")
+
+        if unsold <= 0:
+            continue
+
+        print(f"[Market] {unsold} alloys unsold.")
+
+        # -----------------------------
+        # STORE OPTION
+        # -----------------------------
+        available_space = haven["warehouse_capacity"] - haven["warehouse_inventory"]
+        stored = min(unsold, available_space)
+        unsold -= stored
+
+        if stored > 0:
+            haven["warehouse_inventory"] += stored
+            print(f"[Warehouse] Stored {stored} alloys at Haven.")
+
+        # -----------------------------
+        # RETURN OPTION
+        # -----------------------------
         if unsold > 0:
-            print(f"[Market] {unsold} alloys could not be sold due to low demand.")
+            return_shipment = {
+                "amount": unsold,
+                "arrival_tick": tick + int(route["travel_time"] * RETURN_SHIPPING_MULTIPLIER),
+                "type": "return"
+            }
+            in_transit.append(return_shipment)
+            print(f"[Return] {unsold} alloys sent back to Forge.")
 
+# Inventory Upkeep Costs
+def inventory_upkeep():
+    cost = player["inventory"]["alloys"] * INVENTORY_COST_PER_UNIT
+    player["credits"] -= cost
 
-        player["credits"] += revenue
+    if cost > 0:
+        print(f"[Storage] Paid {cost:.2f} credits to store inventory.")
 
-        print(f"[Arrival] {amount} Alloys sold at Haven for {revenue:.2f} credits.")
+# Warehouse Upkeep Costs
+def warehouse_upkeep():
+    cost = haven["warehouse_inventory"] * haven["warehouse_storage_cost"]
+    player["credits"] -= cost
 
-# Inventory Storage Costs
-def inventory_cost():
-    inventory_cost = player["inventory"]["alloys"] * INVENTORY_COST_PER_UNIT
-    player["credits"] -= inventory_cost
+    if cost > 0:
+        print(f"[Warehouse] Paid {cost:.2f} credits in warehouse fees.")
 
-    if inventory_cost > 0:
-        print(f"[Storage] Paid {inventory_cost:.2f} credits to store inventory")
+# Reset Demand
+def reset_demand():
+    haven["demand_remaining"] = haven["demand_per_tick"]
 
-# Advance Time
+# Time Management
 def advance_time(steps):
-    print("Incrementing time by", steps, "tick(s).")
     global tick
+    print(f"Advancing time by {steps} tick(s).")
+
     for _ in range(steps):
         tick += 1
-        print("Stardate", tick)
-        inventory_cost()
+        print(f"\nStardate {tick}")
+
+        inventory_upkeep()
+        warehouse_upkeep()
         produce()
         resolve_shipments()
-        haven["demand_remaining"] = haven["demand_per_tick"]
+        reset_demand()
 
-# Display current status
+# =============================
+# CLI
+# =============================
+
+# Status Menu
 def status():
     print("\n--- STATUS ---")
     print(f"Stardate: {tick}")
-    print(f"Credits: {player['credits']}")
-    print(f"Inventory: {player['inventory']}")
+    print(f"Credits: {player['credits']:.2f}")
+    print(f"Inventory: {player['inventory']['alloys']} alloys")
     print(f"In Transit: {len(in_transit)} shipments")
-    print("--------------\n")
+    print(f"Warehouse: {haven['warehouse_inventory']}/{haven['warehouse_capacity']}")
+    print("----------------\n")
 
-# Help Menu
+# Help Manu
 def help_menu():
     print("""
 Commands:
  status                 Show current state
- ship <amount>          Ship Alloys from Forge to Haven
- tick <n>               Advance time by n ticks
- help                   Show this menu
+ ship <amount>          Ship alloys to Haven
+ tick <n>               Advance time
+ help                   Show help
  quit                   Exit
 """)
 
@@ -154,35 +231,24 @@ def main():
     print("=== Galactic Trade Simulator (CLI PoC) ===")
     help_menu()
 
-    #civ_name = input("What is your civilizations name?:  ")
-
-    # Menu system
     while True:
-
-        # CLI prompt
         cmd = input("> ").strip().split()
-
         if not cmd:
             continue
 
-        # Exit
         if cmd[0] == "help":
             help_menu()
-
         elif cmd[0] == "status":
             status()
-
         elif cmd[0] == "ship" and len(cmd) == 2:
             ship(int(cmd[1]))
-
         elif cmd[0] == "tick" and len(cmd) == 2:
             advance_time(int(cmd[1]))
-
         elif cmd[0] == "quit":
-            print("Until next time Space Cowboy...")
+            print("Until next time, Space Cowboy.")
             break
         else:
-            print("Unknown command.  Type 'help' for assistance.")
+            print("Unknown command. Type 'help'.")
 
 # Run Main
 main()
