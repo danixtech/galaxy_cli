@@ -6,6 +6,9 @@
 # Import modules
 import random
 
+# Constants
+INVENTORY_COST_PER_UNIT = 0.5
+
 # Set Defaults
 tick = 0
 player = {
@@ -19,13 +22,17 @@ player = {
 forge = {
     "name": "Forge",
     "price": 6,
-    "production_per_tick": 10
+    "production_per_tick": 10,
+    "production_cost": 1
 }
 
 # Destination Planet
 haven = {
     "name": "Haven",
-    "price": 10
+    "base_price": 10,
+    "current_price": 10,
+    "demand_per_tick": 15,
+    "demand_remaining": 15
 }
 
 # Route data
@@ -34,7 +41,8 @@ route = {
     "to": "Haven",
     "travel_time": 3,
     "shipping_cost": 1,
-    "risk": 0.05
+    "risk": 0.05,
+    "base_fee": 5
 }
 
 # Shipments currently moving
@@ -43,8 +51,10 @@ in_transit = []
 # Production
 def produce():
     produced = forge['production_per_tick']
+    production_cost = forge['production_per_tick'] * forge['production_cost']
     player["inventory"]["alloys"] += produced
-    print(f"[Production] Forge produced {produced} alloys.")
+    player["credits"] -= production_cost
+    print(f"[Production] Forge produced {produced} alloys for {production_cost:.2f} credits.")
 
 # Ship Resources
 def ship(amount):
@@ -52,7 +62,7 @@ def ship(amount):
         print("Not enough Alloys to ship.")
         return
 
-    cost = amount * route["shipping_cost"]
+    cost = route["base_fee"] + (amount * route["shipping_cost"])
     if player["credits"] < cost:
         print("Not enough credits to pay shipping cost.")
         return
@@ -66,7 +76,7 @@ def ship(amount):
     }
     in_transit.append(shipment)
 
-    print(f"[Shipping] Sent {amount} Alloys to Haven (arrives at tick {shipment['arrival_tick']})")
+    print(f"[Shipping] Sent {amount} Alloys to Haven for {cost} credits. (arrives at Stardate {shipment['arrival_tick']})")
 
 # Resolve Shipments
 def resolve_shipments():
@@ -78,15 +88,34 @@ def resolve_shipments():
     for shipment in arrived:
         amount = shipment["amount"]
 
-        if random.random() < route["risk"]:
+        effective_risk = route["risk"] * (amount / 10)
+
+        if random.random() < effective_risk:
             lost = amount // 2
             amount -= lost
             print(f"[Risk] Shipment disrupted! Lost {lost} Alloys.")
 
-        revenue = amount * haven["price"]
+        sellable = min(amount, haven["demand_remaining"])
+        unsold = amount - sellable
+
+        revenue = sellable * haven["current_price"]
+        haven["demand_remaining"] -= sellable
+
+        if unsold > 0:
+            print(f"[Market] {unsold} alloys could not be sold due to low demand.")
+
+
         player["credits"] += revenue
 
-        print(f"[Arrival] {amount} Alloys sold at Haven for {revenue} credits.")
+        print(f"[Arrival] {amount} Alloys sold at Haven for {revenue:.2f} credits.")
+
+# Inventory Storage Costs
+def inventory_cost():
+    inventory_cost = player["inventory"]["alloys"] * INVENTORY_COST_PER_UNIT
+    player["credits"] -= inventory_cost
+
+    if inventory_cost > 0:
+        print(f"[Storage] Paid {inventory_cost:.2f} credits to store inventory")
 
 # Advance Time
 def advance_time(steps):
@@ -95,13 +124,15 @@ def advance_time(steps):
     for _ in range(steps):
         tick += 1
         print("Stardate", tick)
+        inventory_cost()
         produce()
         resolve_shipments()
+        haven["demand_remaining"] = haven["demand_per_tick"]
 
 # Display current status
 def status():
     print("\n--- STATUS ---")
-    print(f"Tick: {tick}")
+    print(f"Stardate: {tick}")
     print(f"Credits: {player['credits']}")
     print(f"Inventory: {player['inventory']}")
     print(f"In Transit: {len(in_transit)} shipments")
